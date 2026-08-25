@@ -23,6 +23,13 @@ suppressPackageStartupMessages({
 
 # Set up parallel processing
 param <- list(cores = 4, ram = 60, seed = 38)
+
+# Clone expansion bins, as INCLUSIVE UPPER BOUNDS on the number of cells carrying a clone.
+# Defined once and used by both categorize_clone_sizes() and combineExpression(); these two
+# previously disagreed (the manual version left Hyperexpanded open-ended, the combineExpression
+# call capped it at 100), and because combineExpression overwrites the column the manual
+# definition was silently inert.
+CLONE_BINS <- c(Single = 1, Small = 5, Medium = 20, Large = 50)
 plan("multicore", workers = param$cores)
 set.seed(param$seed)
 options(future.globals.maxSize = param$ram * 1024^3)
@@ -85,12 +92,15 @@ categorize_clone_sizes <- function(combined_tcr) {
   cat("Categorizing clones by expansion level...\n")
   
   for (i in seq_along(combined_tcr)) {
+    # Upper bounds MUST match the cloneSize vector passed to combineExpression() below,
+    # which overwrites this column. Hyperexpanded is open-ended in both places: an unmatched
+    # frequency would otherwise silently become NA.
     combined_tcr[[i]]$cloneSize <- case_when(
-      combined_tcr[[i]]$Frequency == 1 ~ "Single",
-      combined_tcr[[i]]$Frequency >= 2 & combined_tcr[[i]]$Frequency <= 5 ~ "Small",
-      combined_tcr[[i]]$Frequency >= 6 & combined_tcr[[i]]$Frequency <= 20 ~ "Medium", 
-      combined_tcr[[i]]$Frequency >= 21 & combined_tcr[[i]]$Frequency <= 50 ~ "Large",
-      combined_tcr[[i]]$Frequency > 50 ~ "Hyperexpanded"
+      combined_tcr[[i]]$Frequency <= CLONE_BINS[["Single"]] ~ "Single",
+      combined_tcr[[i]]$Frequency <= CLONE_BINS[["Small"]]  ~ "Small",
+      combined_tcr[[i]]$Frequency <= CLONE_BINS[["Medium"]] ~ "Medium",
+      combined_tcr[[i]]$Frequency <= CLONE_BINS[["Large"]]  ~ "Large",
+      TRUE ~ "Hyperexpanded"
     )
     
     # Set factor levels for consistent plotting
@@ -127,7 +137,10 @@ integrate_tcr_with_seurat <- function(seurat_obj, combined_tcr, group_by = "samp
     cloneCall = "strict", 
     group.by = group_by, 
     proportion = FALSE, 
-    cloneSize = c(Single = 1, Small = 5, Medium = 20, Large = 50, Hyperexpanded = 100)
+    # Single source of truth for the bins; see CLONE_BINS. Inf keeps the top bin open-ended
+    # so that a clone larger than the old hard-coded 100 is still called Hyperexpanded
+    # rather than dropped.
+    cloneSize = c(CLONE_BINS, Hyperexpanded = Inf)
   )
   
   return(seurat_obj)
